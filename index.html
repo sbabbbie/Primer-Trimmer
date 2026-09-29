@@ -124,6 +124,10 @@ details.align summary { cursor: pointer; font-size: 13px; color: var(--accent); 
 
 .out-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
 #out { min-height: 180px; background: var(--bg); }
+.file-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.file-note { font-size: 13px; color: var(--muted); }
+.file-note.err { color: var(--bad); }
+textarea.over { border-color: var(--accent); outline: 2px dashed var(--accent); outline-offset: 2px; }
 .toast { font-size: 13px; color: var(--ok); min-height: 1em; }
 .empty { color: var(--muted); font-size: 14px; padding: 18px; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
 
@@ -164,6 +168,11 @@ details.align summary { cursor: pointer; font-size: 13px; color: var(--accent); 
       <div class="field">
         <div class="field-head"><label class="label" for="fasta">Sequences (FASTA)</label><span class="meta" id="fastaMeta"></span></div>
         <textarea id="fasta" spellcheck="false" autocomplete="off" placeholder=">sample_1&#10;ACGTTGCA...&#10;>sample_2&#10;TTGACCA..."></textarea>
+        <div class="file-row">
+          <button class="btn" id="btnOpen" type="button">Open FASTA file(s)</button>
+          <span class="file-note" id="fileNote">or paste above, or drag files onto the box</span>
+        </div>
+        <input type="file" id="filePicker" multiple hidden accept=".fasta,.fas,.fa,.fna,.fsa,.txt,.seq,text/plain">
       </div>
 
       <div class="settings">
@@ -210,7 +219,8 @@ details.align summary { cursor: pointer; font-size: 13px; color: var(--accent); 
         <h2>Trimmed FASTA</h2>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <span class="toast" id="toast" role="status"></span>
-          <button class="btn primary" id="btnCopy" type="button">Copy FASTA</button>
+          <button class="btn" id="btnCopy" type="button">Copy FASTA</button>
+          <button class="btn primary" id="btnDl" type="button">Download .fasta</button>
         </div>
       </div>
       <textarea id="out" readonly spellcheck="false" aria-label="Trimmed FASTA output"></textarea>
@@ -430,6 +440,38 @@ details.align summary { cursor: pointer; font-size: 13px; color: var(--accent); 
   let t = null;
   const schedule = () => { clearTimeout(t); t = setTimeout(render, 120); };
   els.fasta.addEventListener('input', () => { isExample = false; schedule(); });
+
+  // ---------- file loading ----------
+  const baseName = n => n.replace(/(\.(fasta|fas|fa|fna|fsa|seq|txt))+$/i, '');
+  async function loadFiles(files) {
+    const parts = [], skipped = [];
+    for (const f of files) {
+      if (/\.(ab1|abi|scf|docx?|pdf|xlsx?|zip)$/i.test(f.name)) { skipped.push(f.name); continue; }
+      let text = '';
+      try { text = await f.text(); } catch (e) { skipped.push(f.name); continue; }
+      if (text.indexOf('\u0000') !== -1) { skipped.push(f.name); continue; }
+      text = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+      if (!text) { skipped.push(f.name); continue; }
+      if (!text.startsWith('>')) text = '>' + baseName(f.name) + '\n' + text;
+      parts.push(text);
+    }
+    if (parts.length) {
+      const cur = isExample ? '' : els.fasta.value.trim();
+      els.fasta.value = (cur ? cur + '\n' : '') + parts.join('\n') + '\n';
+      isExample = false; render();
+    }
+    const note = $('fileNote');
+    note.classList.toggle('err', !parts.length && skipped.length > 0);
+    note.textContent = (parts.length ? `Added ${parts.length} file${parts.length === 1 ? '' : 's'}.` : '')
+      + (skipped.length ? ` Couldn't read ${skipped.join(', ')} (not a text FASTA file).` : '');
+  }
+  $('btnOpen').addEventListener('click', () => $('filePicker').click());
+  $('filePicker').addEventListener('change', () => { loadFiles([...$('filePicker').files]); $('filePicker').value = ''; });
+  ['dragenter', 'dragover'].forEach(ev => els.fasta.addEventListener(ev, e => { e.preventDefault(); els.fasta.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => els.fasta.addEventListener(ev, () => els.fasta.classList.remove('over')));
+  els.fasta.addEventListener('drop', e => { if (e.dataTransfer.files.length) { e.preventDefault(); e.stopPropagation(); loadFiles([...e.dataTransfer.files]); } });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) loadFiles([...e.dataTransfer.files]); });
   ['fwd', 'rev'].forEach(k => els[k].addEventListener('input', () => { store.set(k, els[k].value); schedule(); }));
   ['maxmm', 'minov', 'orient', 'partial', 'dropBad'].forEach(k => els[k].addEventListener('change', render));
 
@@ -447,6 +489,16 @@ details.align summary { cursor: pointer; font-size: 13px; color: var(--accent); 
   });
   $('btnClear').addEventListener('click', () => { els.fasta.value = ''; isExample = false; render(); els.fasta.focus(); });
 
+  $('btnDl').addEventListener('click', () => {
+    const txt = $('out').value, toast = $('toast');
+    const say = m => { toast.textContent = m; clearTimeout(toast._t); toast._t = setTimeout(() => toast.textContent = '', 3000); };
+    if (!txt) { say('Nothing to download yet'); return; }
+    try {
+      const url = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
+      const a = document.createElement('a'); a.href = url; a.download = 'trimmed_sequences.fasta'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000); say('Downloading trimmed_sequences.fasta');
+    } catch (e) { say('Download blocked here. Use Copy instead.'); }
+  });
   $('btnCopy').addEventListener('click', () => {
     const out = $('out'), toast = $('toast');
     const done = msg => { toast.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(() => toast.textContent = '', 2500); };
