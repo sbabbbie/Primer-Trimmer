@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sanger Primer Trimmer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: two-pane lab bench — inputs on the left, per-sequence results + trimmed FASTA on the right; stacks on phones. */
+:root {
+  --bg: #F3F6F7; --surface: #FFFFFF; --sunken: #EAEFF1; --ink: #15212B; --muted: #5A6874; --line: #D5DDE2;
+  --accent: #1D5CA8; --accent-ink: #FFFFFF;
+  --fwd: #1F6FD1; --fwd-soft: #DCE9FA; --rev: #C2410C; --rev-soft: #FBE3D6; --flank: #C9D2D8; --insert: #9AAAB6;
+  --ok: #1B7443; --ok-bg: #E1F3E8; --warn: #9A5800; --warn-bg: #FCEFD8; --bad: #B42318; --bad-bg: #FBE3E1;
+  --f-display: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0E1418; --surface: #151D23; --sunken: #1B252C; --ink: #E4EBEF; --muted: #97A5B0; --line: #2B3740;
+  --accent: #6EA8F0; --accent-ink: #0E1418;
+  --fwd: #62A4F2; --fwd-soft: #1B3350; --rev: #F28D5A; --rev-soft: #452617; --flank: #3A4750; --insert: #62737F;
+  --ok: #4FC48B; --ok-bg: #173226; --warn: #E6A84C; --warn-bg: #3A2C14; --bad: #F2786D; --bad-bg: #3F1C1A;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0E1418; --surface: #151D23; --sunken: #1B252C; --ink: #E4EBEF; --muted: #97A5B0; --line: #2B3740;
+  --accent: #6EA8F0; --accent-ink: #0E1418;
+  --fwd: #62A4F2; --fwd-soft: #1B3350; --rev: #F28D5A; --rev-soft: #452617; --flank: #3A4750; --insert: #62737F;
+  --ok: #4FC48B; --ok-bg: #173226; --warn: #E6A84C; --warn-bg: #3A2C14; --bad: #F2786D; --bad-bg: #3F1C1A;
+  color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; }
+@media (max-width: 480px) { .wrap { padding-inline: 16px; } }
+
+header.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; margin-bottom: 22px; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(26px, 4vw, 34px); letter-spacing: -0.01em; margin: 0; line-height: 1.1; text-wrap: balance; }
+h1 .dir { font-family: var(--f-mono); font-weight: 500; font-size: 0.42em; letter-spacing: 0; vertical-align: middle; margin-left: 10px; color: var(--muted); }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 64ch; }
+.top-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.panel h2 { font-family: var(--f-display); font-weight: 600; font-size: 17px; margin: 0; }
+.label { display: block; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.field { display: flex; flex-direction: column; min-width: 0; }
+.field-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.meta { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.meta.err { color: var(--bad); }
+
+input[type=text], textarea, select {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; width: 100%;
+}
+input.seq, textarea { font-family: var(--f-mono); font-size: 13.5px; letter-spacing: 0.02em; }
+textarea { resize: vertical; min-height: 220px; line-height: 1.45; }
+input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.primer-row { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.tag { display: inline-block; font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 1px 6px; border-radius: 4px; margin-right: 6px; letter-spacing: 0; text-transform: none; }
+.tag.f { background: var(--fwd-soft); color: var(--fwd); }
+.tag.r { background: var(--rev-soft); color: var(--rev); }
+
+.settings { border-top: 1px solid var(--line); padding-top: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+@media (max-width: 480px) { .settings { grid-template-columns: minmax(0, 1fr); } }
+.settings .span2 { grid-column: 1 / -1; }
+.check { display: flex; gap: 9px; align-items: flex-start; font-size: 14px; cursor: pointer; }
+.check input { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.check small { display: block; color: var(--muted); font-size: 12.5px; }
+.inline-num { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.inline-num select { width: auto; padding: 5px 8px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--bg); color: var(--muted); padding: 7px 12px; font-size: 13.5px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+
+button { font: inherit; cursor: pointer; border-radius: 7px; }
+.btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 7px 13px; font-size: 14px; font-weight: 500; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+
+.summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; padding: 3px 10px; border-radius: 999px; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.example-note { font-size: 13px; color: var(--muted); }
+.example-note b { color: var(--warn); font-weight: 600; }
+
+.results { display: flex; flex-direction: column; gap: 10px; }
+.res { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; background: var(--surface); position: relative; }
+.res.warn { border-left: 4px solid var(--warn); }
+.res.bad { border-left: 4px solid var(--bad); }
+.res.ok { border-left: 4px solid var(--ok); }
+.res-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; align-items: baseline; }
+.res-name { font-family: var(--f-mono); font-weight: 500; font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
+.res-len { font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12.5px; padding: 2px 8px; border-radius: 5px; background: var(--sunken); color: var(--ink); }
+.chip.f { background: var(--fwd-soft); color: var(--fwd); }
+.chip.r { background: var(--rev-soft); color: var(--rev); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
+.chip.bad { background: var(--bad-bg); color: var(--bad); }
+.chip.flip { background: var(--sunken); color: var(--ink); font-weight: 500; }
+
+.track { display: flex; height: 12px; border-radius: 3px; overflow: hidden; background: var(--sunken); }
+.track span { display: block; min-width: 2px; }
+.track .fl { background: var(--flank); opacity: 0.7; background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--surface) 3px 4px); }
+.track .fp { background: var(--fwd); }
+.track .rp { background: var(--rev); }
+.track .in { background: var(--insert); }
+.track-cap { display: flex; justify-content: space-between; font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+details.align summary { cursor: pointer; font-size: 13px; color: var(--accent); width: fit-content; }
+.align-box { margin-top: 8px; overflow-x: auto; background: var(--sunken); border-radius: 6px; padding: 10px 12px; }
+.align-box pre { margin: 0; font-family: var(--f-mono); font-size: 12.5px; line-height: 1.5; white-space: pre; }
+.align-box .cap { font-family: var(--f-body); font-size: 12px; color: var(--muted); margin: 8px 0 2px; }
+.align-box .cap:first-child { margin-top: 0; }
+.mm { background: var(--bad-bg); color: var(--bad); font-weight: 500; border-radius: 2px; }
+
+.out-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+#out { min-height: 180px; background: var(--bg); }
+.toast { font-size: 13px; color: var(--ok); min-height: 1em; }
+.empty { color: var(--muted); font-size: 14px; padding: 18px; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
+
+.help { font-size: 13.5px; color: var(--muted); }
+.help summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+.help ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.help code { font-family: var(--f-mono); font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Sanger Primer Trimmer <span class="dir">5′ → 3′</span></h1>
+      <p class="lede">Paste your assembled sequences and primers. Each sequence is checked in both orientations, primers are found (mismatches and degenerate bases allowed), and the trimmed sequences come out as FASTA.</p>
+    </div>
+    <div class="top-actions">
+      <button class="btn" id="btnExample" type="button">Load example</button>
+      <button class="btn" id="btnClear" type="button">Clear sequences</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="panel" aria-label="Inputs">
+      <div class="primer-row">
+        <div class="field">
+          <div class="field-head"><label class="label" for="fwd"><span class="tag f">F</span>Forward primer (5′→3′)</label><span class="meta" id="fwdMeta"></span></div>
+          <input class="seq" type="text" id="fwd" spellcheck="false" autocomplete="off" placeholder="e.g. GGTCAACAAATCATAAAGATATTGG">
+        </div>
+        <div class="field">
+          <div class="field-head"><label class="label" for="rev"><span class="tag r">R</span>Reverse primer (5′→3′, as ordered)</label><span class="meta" id="revMeta"></span></div>
+          <input class="seq" type="text" id="rev" spellcheck="false" autocomplete="off" placeholder="e.g. TAAACTTCAGGGTGACCAAAAAATCA">
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-head"><label class="label" for="fasta">Sequences (FASTA)</label><span class="meta" id="fastaMeta"></span></div>
+        <textarea id="fasta" spellcheck="false" autocomplete="off" placeholder=">sample_1&#10;ACGTTGCA...&#10;>sample_2&#10;TTGACCA..."></textarea>
+      </div>
+
+      <div class="settings">
+        <div class="span2">
+          <span class="label">Output</span>
+          <div class="seg" role="group" aria-label="Output">
+            <button type="button" id="modeRemove" aria-pressed="true">Remove primers</button>
+            <button type="button" id="modeKeep" aria-pressed="false">Keep primers, trim outside</button>
+          </div>
+        </div>
+        <label class="inline-num" for="maxmm">Mismatches allowed per primer
+          <select id="maxmm"><option>0</option><option>1</option><option selected>2</option><option>3</option><option>4</option></select>
+        </label>
+        <label class="inline-num" for="minov">Shortest partial match
+          <select id="minov"><option>8</option><option>10</option><option selected>12</option><option>15</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="orient" checked><span>Flip reversed sequences<small>Output everything reading forward primer → reverse primer.</small></span></label>
+        <label class="check"><input type="checkbox" id="partial" checked><span>Find cut-off primers at the ends<small>For assemblies that start or stop partway through a primer.</small></span></label>
+        <label class="check span2"><input type="checkbox" id="dropBad"><span>Leave sequences with no primers found out of the output<small>They still show in the results list.</small></span></label>
+      </div>
+
+      <details class="help">
+        <summary>How it works</summary>
+        <ul>
+          <li>Enter both primers exactly as ordered, 5′→3′. The tool works out the reverse complements itself.</li>
+          <li>Each sequence is tried as entered (looking for F, then the reverse complement of R) and reverse-complemented (the same search on the flipped sequence). Whichever orientation matches better is used.</li>
+          <li>Degenerate bases (R, Y, S, W, K, M, B, D, H, V, N) work in primers and in sequences.</li>
+          <li>Mismatches are counted base by base. Insertions or deletions inside a primer site aren't detected, so check sequences flagged as missing a primer.</li>
+          <li>A cut-off primer match must be at the very start (F) or very end (R) and allows proportionally fewer mismatches.</li>
+          <li>Gaps (<code>-</code>), numbers and spaces in sequences are removed. Output is uppercase, one line per sequence.</li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="panel" aria-label="Results">
+      <div class="out-head">
+        <h2>Results</h2>
+        <div class="summary" id="summary"></div>
+      </div>
+      <div class="example-note" id="exampleNote" hidden><b>Example data.</b> Sample COI sequences with LCO1490 / HCO2198 primers, made up for demonstration. Clear them and paste your own.</div>
+      <div class="results" id="results"></div>
+
+      <div class="out-head">
+        <h2>Trimmed FASTA</h2>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="toast" id="toast" role="status"></span>
+          <button class="btn primary" id="btnCopy" type="button">Copy FASTA</button>
+        </div>
+      </div>
+      <textarea id="out" readonly spellcheck="false" aria-label="Trimmed FASTA output"></textarea>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ---------- IUPAC helpers ----------
+  const BITS = { A:1, C:2, G:4, T:8, U:8, R:5, Y:10, S:6, W:9, K:12, M:3, B:14, D:13, H:11, V:7, N:15 };
+  const COMP = { A:'T', C:'G', G:'C', T:'A', U:'A', R:'Y', Y:'R', S:'S', W:'W', K:'M', M:'K', B:'V', D:'H', H:'D', V:'B', N:'N' };
+  const bit = c => BITS[c] || 15;
+  const rc = s => s.split('').reverse().map(c => COMP[c] || 'N').join('');
+  const cleanSeq = s => s.toUpperCase().replace(/[^A-Z]/g, '');
+  const badChars = s => [...new Set(s.split('').filter(c => !(c in BITS)))];
+
+  function countMM(seq, off, pr, limit) {
+    let mm = 0;
+    for (let j = 0; j < pr.length; j++) {
+      if ((bit(pr[j]) & bit(seq[off + j])) === 0) { if (++mm > limit) return mm; }
+    }
+    return mm;
+  }
+  // Full-length match anywhere. prefer 'left' keeps first best hit, 'right' keeps last.
+  function findFull(seq, pr, maxMM, prefer) {
+    let best = null;
+    for (let i = 0; i + pr.length <= seq.length; i++) {
+      const mm = countMM(seq, i, pr, maxMM);
+      if (mm <= maxMM && (!best || mm < best.mm || (mm === best.mm && prefer === 'right'))) {
+        best = { start: i, end: i + pr.length, mm, partial: false, pStart: 0, pEnd: pr.length };
+        if (mm === 0 && prefer === 'left') break;
+      }
+    }
+    return best;
+  }
+  // 3' part of F sitting at the very start of the sequence
+  function findPartialStart(seq, pr, maxMM, minOv) {
+    for (let L = Math.min(pr.length - 1, seq.length); L >= minOv; L--) {
+      const sub = pr.slice(pr.length - L), allow = Math.floor(maxMM * L / pr.length);
+      const mm = countMM(seq, 0, sub, allow);
+      if (mm <= allow) return { start: 0, end: L, mm, partial: true, pStart: pr.length - L, pEnd: pr.length };
+    }
+    return null;
+  }
+  // 5' part of rc(R) sitting at the very end of the sequence
+  function findPartialEnd(seq, pr, maxMM, minOv) {
+    for (let L = Math.min(pr.length - 1, seq.length); L >= minOv; L--) {
+      const sub = pr.slice(0, L), allow = Math.floor(maxMM * L / pr.length);
+      const mm = countMM(seq, seq.length - L, sub, allow);
+      if (mm <= allow) return { start: seq.length - L, end: seq.length, mm, partial: true, pStart: 0, pEnd: L };
+    }
+    return null;
+  }
+
+  function analyzeOrientation(seq, F, rcR, o) {
+    let f = F ? findFull(seq, F, o.maxMM, 'left') : null;
+    if (!f && F && o.partial) f = findPartialStart(seq, F, o.maxMM, o.minOv);
+    let r = rcR ? findFull(seq, rcR, o.maxMM, 'right') : null;
+    if (!r && rcR && o.partial) r = findPartialEnd(seq, rcR, o.maxMM, o.minOv);
+    let orderProblem = false;
+    if (f && r && f.end > r.start) {
+      // Overlapping or out of order: keep the better single hit
+      orderProblem = true;
+      if ((f.partial ? 1 : 0) + f.mm <= (r.partial ? 1 : 0) + r.mm) r = null; else f = null;
+    }
+    const found = (f ? 1 : 0) + (r ? 1 : 0);
+    const partials = (f && f.partial ? 1 : 0) + (r && r.partial ? 1 : 0);
+    const mm = (f ? f.mm : 0) + (r ? r.mm : 0);
+    return { seq, f, r, found, partials, mm, orderProblem };
+  }
+  const better = (a, b) => a.found !== b.found ? a.found > b.found
+    : a.partials !== b.partials ? a.partials < b.partials : a.mm < b.mm;
+
+  function parseFasta(text) {
+    const recs = []; let cur = null;
+    text.split(/\r?\n/).forEach(line => {
+      const t = line.trim();
+      if (!t) return;
+      if (t.startsWith('>')) { cur = { name: t.slice(1).trim() || 'unnamed', raw: '' }; recs.push(cur); }
+      else { if (!cur) { cur = { name: 'sequence_' + (recs.length + 1), raw: '' }; recs.push(cur); } cur.raw += t; }
+    });
+    return recs.map(r => ({ name: r.name, seq: cleanSeq(r.raw) })).filter(r => r.seq.length);
+  }
+
+  // ---------- state ----------
+  const $ = id => document.getElementById(id);
+  const els = { fwd: $('fwd'), rev: $('rev'), fasta: $('fasta'), maxmm: $('maxmm'), minov: $('minov'), orient: $('orient'), partial: $('partial'), dropBad: $('dropBad') };
+  let keepPrimers = false, isExample = false;
+
+  const store = {
+    get(k) { try { return localStorage.getItem('ptrim.' + k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem('ptrim.' + k, v); } catch (e) {} }
+  };
+
+  // Example: made-up COI-like inserts; primers are the standard Folmer LCO1490/HCO2198
+  const EX_F = 'GGTCAACAAATCATAAAGATATTGG', EX_R = 'TAAACTTCAGGGTGACCAAAAAATCA';
+  function buildExample() {
+    const ins1 = 'AACATTATATTTTATTTTTGGAATTTGAGCAGGAATAGTAGGAACTTCTTTAAGATTATTAATTCGAGCAGAATTAGGTAATCCAGGATCTTTAATTGGAGATGATCAAATTTATAATACTATTGTTACAGCTCATGCTTTTATTATAATTTTTTTTATAGTTATACC';
+    const ins2 = 'TACTTTATATTTTATTTTTGGTGCTTGAGCAGGAATAGTTGGAACCTCTTTAAGATTATTAATTCGAGCTGAACTAGGAAACCCCGGATCTTTAATTGGAGATGACCAAATTTATAATGTTATCGTAACTGCTCATGCATTTATTATAATTTTCTTTATAGTAATACC';
+    const rcR = rc(EX_R);
+    const s1 = 'TTGACAGTTC' + EX_F + ins1 + rcR + 'ATCGGA';
+    const f2 = EX_F.slice(0, 12) + 'C' + EX_F.slice(13); // one mismatch
+    const s2 = rc('GCATTAG' + f2 + ins2 + rcR + 'GGTTACCGT');   // assembled backwards
+    const s3 = EX_F.slice(9) + ins1.slice(0, 120) + rcR + 'TTA'; // starts partway into F
+    const s4 = 'ACGGATTTCAGGACCTTAGCAGTAGGCATAGCCTTGCAAGGTCCTTAACGGATTACCAGTTAGACCATGCATTAC'; // no primers
+    const wrap = s => s.match(/.{1,70}/g).join('\n');
+    return `>specimen_01_COI\n${wrap(s1)}\n>specimen_02_COI\n${wrap(s2)}\n>specimen_03_COI\n${wrap(s3)}\n>specimen_04_COI\n${wrap(s4)}\n`;
+  }
+
+  // ---------- rendering ----------
+  const esc = s => s.replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[c]);
+
+  function alignHTML(primer, hit, seq) {
+    const p = primer.slice(hit.pStart, hit.pEnd), s = seq.slice(hit.start, hit.end);
+    let top = '', mid = '', bot = '';
+    for (let i = 0; i < p.length; i++) {
+      const ok = (bit(p[i]) & bit(s[i])) !== 0;
+      top += ok ? esc(p[i]) : `<span class="mm">${esc(p[i])}</span>`;
+      mid += ok ? '|' : ' ';
+      bot += ok ? esc(s[i]) : `<span class="mm">${esc(s[i])}</span>`;
+    }
+    return `primer   ${top}\n         ${mid}\nsequence ${bot}   (positions ${hit.start + 1}–${hit.end})`;
+  }
+
+  function render() {
+    const F = cleanSeq(els.fwd.value), R = cleanSeq(els.rev.value);
+    const fb = badChars(F), rb = badChars(R);
+    setMeta($('fwdMeta'), F, fb); setMeta($('revMeta'), R, rb);
+
+    const o = { maxMM: +els.maxmm.value, minOv: +els.minov.value, partial: els.partial.checked };
+    const recs = parseFasta(els.fasta.value);
+    $('fastaMeta').textContent = recs.length ? `${recs.length} sequence${recs.length > 1 ? 's' : ''}` : '';
+    $('exampleNote').hidden = !isExample;
+
+    const resultsEl = $('results');
+    if (!F && !R) { resultsEl.innerHTML = '<div class="empty">Enter at least one primer to start.</div>'; $('summary').innerHTML = ''; $('out').value = ''; return; }
+    if (!recs.length) { resultsEl.innerHTML = '<div class="empty">Paste FASTA sequences on the left. Results appear here as you type.</div>'; $('summary').innerHTML = ''; $('out').value = ''; return; }
+
+    const rcR = R ? rc(R) : '';
+    let nOk = 0, nWarn = 0, nBad = 0; const outLines = []; const cards = [];
+
+    recs.forEach(rec => {
+      const a = analyzeOrientation(rec.seq, F, rcR, o);
+      const b = analyzeOrientation(rc(rec.seq), F, rcR, o);
+      const flipped = better(b, a);
+      const use = flipped ? b : a, s = use.seq, f = use.f, r = use.r;
+
+      let cutA = 0, cutB = s.length;
+      if (f) cutA = keepPrimers ? f.start : f.end;
+      if (r) cutB = keepPrimers ? r.end : r.start;
+      let trimmed = s.slice(cutA, cutB);
+      if (flipped && !els.orient.checked) trimmed = rc(trimmed);
+
+      const needF = !!F, needR = !!R;
+      const missing = (needF && !f) || (needR && !r);
+      let status = 'ok';
+      if (use.found === 0) status = 'bad'; else if (missing || use.orderProblem) status = 'warn';
+      status === 'ok' ? nOk++ : status === 'warn' ? nWarn++ : nBad++;
+
+      if (!(status === 'bad' && els.dropBad.checked)) {
+        outLines.push('>' + rec.name, status === 'bad' ? rec.seq : trimmed);
+      }
+
+      // chips
+      const chips = [];
+      if (use.found > 0 && flipped) chips.push(`<span class="chip flip">Reverse-complemented${els.orient.checked ? '' : ' to find primers; output kept as entered'}</span>`);
+      if (f) chips.push(`<span class="chip f">F at ${f.start + 1}–${f.end}${f.partial ? ` · partial ${f.end - f.start}/${F.length} nt` : ''} · ${f.mm} mismatch${f.mm === 1 ? '' : 'es'}</span>`);
+      else if (needF && use.found > 0) chips.push(`<span class="chip warn">Forward primer not found · 5′ end untrimmed</span>`);
+      if (r) chips.push(`<span class="chip r">R at ${r.start + 1}–${r.end}${r.partial ? ` · partial ${r.end - r.start}/${R.length} nt` : ''} · ${r.mm} mismatch${r.mm === 1 ? '' : 'es'}</span>`);
+      else if (needR && use.found > 0) chips.push(`<span class="chip warn">Reverse primer not found · 3′ end untrimmed</span>`);
+      if (use.orderProblem) chips.push(`<span class="chip warn">Primer hits overlapped; kept the better one</span>`);
+      if (use.found === 0) chips.push(`<span class="chip bad">No primers found in either orientation${els.dropBad.checked ? ' · left out of output' : ' · output unchanged'}</span>`);
+
+      // track (in F→R orientation)
+      let track = '', cap = '';
+      if (use.found > 0) {
+        const segs = [];
+        const push = (cls, len) => { if (len > 0) segs.push(`<span class="${cls}" style="flex-grow:${len}"></span>`); };
+        const fS = f ? f.start : 0, fE = f ? f.end : 0, rS = r ? r.start : s.length, rE = r ? r.end : s.length;
+        push('fl', fS); push('fp', fE - fS); push('in', rS - fE); push('rp', rE - rS); push('fl', s.length - rE);
+        track = `<div class="track" aria-hidden="true">${segs.join('')}</div>`;
+        cap = `<div class="track-cap"><span>5′ ${f ? 'F' : ''}</span><span>kept ${cutA + 1}–${cutB}</span><span>${r ? 'R' : ''} 3′</span></div>`;
+      }
+
+      let align = '';
+      if (f || r) {
+        let box = '';
+        if (f) box += `<div class="cap">Forward primer${f.partial ? ' (3′ end only)' : ''}</div><pre>${alignHTML(F, f, s)}</pre>`;
+        if (r) box += `<div class="cap">Reverse primer, reverse complement${r.partial ? ' (5′ part only)' : ''}</div><pre>${alignHTML(rcR, r, s)}</pre>`;
+        const note = flipped ? '<div class="cap">Positions are on the reverse-complemented sequence.</div>' : '';
+        align = `<details class="align"><summary>Show primer matches</summary><div class="align-box">${box}${note}</div></details>`;
+      }
+
+      const outLen = status === 'bad' ? rec.seq.length : trimmed.length;
+      cards.push(`<article class="res ${status}">
+        <div class="res-head"><span class="res-name">${esc(rec.name)}</span><span class="res-len">${rec.seq.length} → ${outLen} bp</span></div>
+        <div class="chips">${chips.join('')}</div>${track}${cap}${align}</article>`);
+    });
+
+    resultsEl.innerHTML = cards.join('');
+    const pills = [];
+    if (nOk) pills.push(`<span class="pill ok">${nOk} trimmed both ends</span>`);
+    if (nWarn) pills.push(`<span class="pill warn">${nWarn} need a look</span>`);
+    if (nBad) pills.push(`<span class="pill bad">${nBad} no primers</span>`);
+    $('summary').innerHTML = pills.join('');
+    $('out').value = outLines.join('\n') + (outLines.length ? '\n' : '');
+  }
+
+  function setMeta(el, s, bad) {
+    if (!s) { el.textContent = ''; el.classList.remove('err'); return; }
+    if (bad.length) { el.textContent = 'not a base: ' + bad.join(' '); el.classList.add('err'); }
+    else { el.textContent = s.length + ' nt'; el.classList.remove('err'); }
+  }
+
+  // ---------- events ----------
+  let t = null;
+  const schedule = () => { clearTimeout(t); t = setTimeout(render, 120); };
+  els.fasta.addEventListener('input', () => { isExample = false; schedule(); });
+  ['fwd', 'rev'].forEach(k => els[k].addEventListener('input', () => { store.set(k, els[k].value); schedule(); }));
+  ['maxmm', 'minov', 'orient', 'partial', 'dropBad'].forEach(k => els[k].addEventListener('change', render));
+
+  function setMode(keep) {
+    keepPrimers = keep;
+    $('modeRemove').setAttribute('aria-pressed', String(!keep));
+    $('modeKeep').setAttribute('aria-pressed', String(keep));
+    render();
+  }
+  $('modeRemove').addEventListener('click', () => setMode(false));
+  $('modeKeep').addEventListener('click', () => setMode(true));
+
+  $('btnExample').addEventListener('click', () => {
+    els.fwd.value = EX_F; els.rev.value = EX_R; store.set('fwd', EX_F); store.set('rev', EX_R); els.fasta.value = buildExample(); isExample = true; render();
+  });
+  $('btnClear').addEventListener('click', () => { els.fasta.value = ''; isExample = false; render(); els.fasta.focus(); });
+
+  $('btnCopy').addEventListener('click', () => {
+    const out = $('out'), toast = $('toast');
+    const done = msg => { toast.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(() => toast.textContent = '', 2500); };
+    if (!out.value) { done('Nothing to copy yet'); return; }
+    const fallback = () => { out.focus(); out.select(); done('Selected. Press Ctrl+C (⌘C on Mac) to copy.'); };
+    try { navigator.clipboard.writeText(out.value).then(() => done('Copied'), fallback); } catch (e) { fallback(); }
+  });
+
+  // ---------- start ----------
+  const sf = store.get('fwd'), sr = store.get('rev');
+  if (sf || sr) { els.fwd.value = sf || ''; els.rev.value = sr || ''; }
+  else { els.fwd.value = EX_F; els.rev.value = EX_R; els.fasta.value = buildExample(); isExample = true; }
+  render();
+
+  // expose for testing
+  window.__ptrim = { rc, parseFasta, analyzeOrientation, cleanSeq };
+})();
+</script>
+</body>
+</html>
